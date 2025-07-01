@@ -13,7 +13,7 @@ namespace BeaconPlugin;
 public class BeaconPlugin : BasePlugin, IPluginConfig<BeaconConfig>
 {
     public override string ModuleName => "Beacon Plugin";
-    public override string ModuleVersion => "1.0.2";
+    public override string ModuleVersion => "1.0.3";
     public override string ModuleAuthor => "+SyntX";
     public override string ModuleDescription => "Toggles a beacon effect around players using css_beacon command";
 
@@ -76,20 +76,81 @@ public class BeaconPlugin : BasePlugin, IPluginConfig<BeaconConfig>
             return;
         }
 
-        string targetArg = command.ArgString;
-        if (string.IsNullOrWhiteSpace(targetArg))
+        if (command.ArgCount < 2)
         {
-            command.ReplyToCommand("Usage: !beacon <target> (e.g., !beacon @me, !beacon @t, !beacon <playername>)");
+            command.ReplyToCommand("Usage: !beacon <target> (e.g., !beacon @me, !beacon @t, !beacon @ct, !beacon @all, !beacon <playername>)");
             return;
         }
 
-        var targets = command.GetArgTargetResult(0).Where(p => p.PawnIsAlive).ToList();
+        string targetArg = command.GetArg(1);
+        if (string.IsNullOrWhiteSpace(targetArg))
+        {
+            command.ReplyToCommand("Usage: !beacon <target> (e.g., !beacon @me, !beacon @t, !beacon @ct, !beacon @all, !beacon <playername>)");
+            return;
+        }
+
+        List<CCSPlayerController> targets = new List<CCSPlayerController>();
+
+        switch (targetArg.ToLower())
+        {
+            case "@me":
+                if (player.PawnIsAlive)
+                    targets.Add(player);
+                break;
+            
+            case "@all":
+                targets = Utilities.GetPlayers().Where(p => p.IsValid && p.PawnIsAlive).ToList();
+                break;
+            
+            case "@t":
+            case "@terrorist":
+            case "@terrorists":
+                targets = Utilities.GetPlayers().Where(p => p.IsValid && p.PawnIsAlive && p.TeamNum == 2).ToList();
+                break;
+            
+            case "@ct":
+            case "@cts":
+            case "@counterterrorist":
+            case "@counterterrorists":
+                targets = Utilities.GetPlayers().Where(p => p.IsValid && p.PawnIsAlive && p.TeamNum == 3).ToList();
+                break;
+            
+            default:
+                var playerByName = Utilities.GetPlayers()
+                    .Where(p => p.IsValid && p.PawnIsAlive && 
+                        p.PlayerName.Contains(targetArg, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                
+                if (playerByName.Count > 0)
+                {
+                    targets = playerByName;
+                }
+                else
+                {
+                    try
+                    {
+                        targets = command.GetArgTargetResult(1).Where(p => p.PawnIsAlive).ToList();
+                    }
+                    catch
+                    {
+
+                    }
+                }
+                break;
+        }
 
         if (targets.Count == 0)
         {
-            command.ReplyToCommand("No valid target found.");
+            command.ReplyToCommand($"No valid alive target found for '{targetArg}'.");
             return;
         }
+
+        string adminName = player.PlayerName;
+        string adminSteamId = player.SteamID.ToString();
+        string mapName = Server.MapName;
+
+        bool sendIndividualMessage = targetArg.ToLower() == "@me" || 
+                                    (targets.Count == 1 && !targetArg.ToLower().StartsWith("@"));
 
         foreach (var targetPlayer in targets)
         {
@@ -98,23 +159,39 @@ public class BeaconPlugin : BasePlugin, IPluginConfig<BeaconConfig>
                 _playerBeacons[targetPlayer] = (null, new List<CEnvBeam>(), false, null, 0, 0.0f);
             }
 
-            string adminName = player.PlayerName;
-            string adminSteamId = player.SteamID.ToString();
             string clientSteamId = targetPlayer.SteamID.ToString();
-            string mapName = Server.MapName;
 
             if (!_playerBeacons[targetPlayer].Active)
             {
                 StartBeacon(targetPlayer);
-                targetPlayer.PrintToChat($"{ChatColors.Green}[Beacon]{ChatColors.Default} Admin {adminName} has toggled a beacon on you for {Config.BeaconDuration} seconds!");
+                
+                if (sendIndividualMessage)
+                {
+                    targetPlayer.PrintToChat($"{ChatColors.Green}[Beacon]{ChatColors.Default} Admin {adminName} has toggled a beacon on you for {Config.BeaconDuration} seconds!");
+                }
+                
                 LogEvent($"{DateTime.Now:yyyy-MM-dd HH:mm:ss zzz} - Admin {adminName} (SteamID: {adminSteamId}) started beacon on {targetPlayer.PlayerName} (SteamID: {clientSteamId}) on map {mapName}");
             }
             else
             {
                 StopBeacon(targetPlayer);
-                targetPlayer.PrintToChat($"{ChatColors.Green}[Beacon]{ChatColors.Default} Admin {adminName} has stopped your beacon.");
+                
+                if (sendIndividualMessage)
+                {
+                    targetPlayer.PrintToChat($"{ChatColors.Green}[Beacon]{ChatColors.Default} Admin {adminName} has stopped your beacon.");
+                }
+                
                 LogEvent($"{DateTime.Now:yyyy-MM-dd HH:mm:ss zzz} - Admin {adminName} (SteamID: {adminSteamId}) stopped beacon on {targetPlayer.PlayerName} (SteamID: {clientSteamId}) on map {mapName}");
             }
+        }
+
+        if (targets.Count > 1)
+        {
+            command.ReplyToCommand($"Beacon toggled for {targets.Count} players.");
+        }
+        else if (targets.Count == 1)
+        {
+            command.ReplyToCommand($"Beacon toggled for {targets[0].PlayerName}.");
         }
     }
 
